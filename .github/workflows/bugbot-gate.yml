@@ -1,0 +1,75 @@
+name: Bugbot Gate
+
+on:
+  workflow_call:
+    inputs:
+      sha:
+        required: true
+        type: string
+      bugbot_check_name:
+        required: false
+        type: string
+        default: Cursor Bugbot
+      timeout_minutes:
+        required: false
+        type: number
+        default: 15
+
+permissions:
+  contents: read
+  checks: read
+  pull-requests: read
+
+jobs:
+  gate:
+    name: Bugbot Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes + 2 }}
+
+    steps:
+      - name: Wait for Bugbot check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const sha = "${{ inputs.sha }}";
+            const target = "${{ inputs.bugbot_check_name }}";
+            const timeoutMs = Number("${{ inputs.timeout_minutes }}") * 60 * 1000;
+            const start = Date.now();
+
+            while (true) {
+              const { data } = await github.rest.checks.listForRef({
+                owner,
+                repo,
+                ref: sha,
+                per_page: 100
+              });
+
+              const matching = data.check_runs.filter(run => run.name === target);
+              const latest = matching.sort((a, b) => b.id - a.id)[0];
+
+              if (latest) {
+                core.info(
+                  `Latest ${target} status is ${latest.status} (conclusion: ${latest.conclusion ?? "n/a"})`
+                );
+              }
+
+              if (latest && latest.status === "completed") {
+                core.info(`Found completed ${target} with conclusion: ${latest.conclusion}`);
+
+                if (latest.conclusion !== "success") {
+                  core.setFailed(`${target} conclusion was ${latest.conclusion}`);
+                }
+
+                return;
+              }
+
+              if (Date.now() - start > timeoutMs) {
+                core.setFailed(`Timed out waiting for ${target}`);
+                return;
+              }
+
+              core.info(`Still waiting for ${target} on ${sha}...`);
+              await new Promise(resolve => setTimeout(resolve, 15000));
+            }
