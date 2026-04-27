@@ -93,6 +93,7 @@ Important:
 
 - Keep expensive CI out of direct `pull_request` triggers if the goal is to save Actions minutes.
 - Use `github.event.workflow_run.head_sha` for checkout so downstream CI tests the same PR commit that passed the gate.
+- In `actions/github-script`, pass workflow inputs via `env` and read from `process.env` (never interpolate inputs into script literals).
 
 ## 3) Org ruleset setup
 
