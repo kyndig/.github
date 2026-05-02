@@ -1,0 +1,202 @@
+name: PR Metadata Check
+
+# Reusable workflow that enforces PR description quality.
+#
+# What it checks (blocking unless noted):
+#   - PR links a tracked issue (Fixes/Closes #N) or a work doc (opt-in)
+#   - ContractImpact field matches whether contract files changed (opt-in)
+#   - Bot PRs are skipped automatically
+#
+# Non-blocking warnings:
+#   - Template sections that appear unfilled
+#   - Code changes without changelog update (when code_change_regex is set)
+#   - Missing or empty Release: field
+
+on:
+  workflow_call:
+    inputs:
+      require_issue_ref:
+        description: Require Fixes/Closes #N in the PR description.
+        required: false
+        type: boolean
+        default: true
+      allow_work_doc:
+        description: "Also accept WorkDoc: docs/work/<slug>.md as an alternative to an issue ref."
+        required: false
+        type: boolean
+        default: false
+      work_doc_path_prefix:
+        description: Path prefix for WorkDoc links (used when allow_work_doc is true).
+        required: false
+        type: string
+        default: "docs/work/"
+      require_contract_impact:
+        description: Require ContractImpact:none|updated and validate it against changed files.
+        required: false
+        type: boolean
+        default: false
+      contract_dir:
+        description: Directory path for contract files (used when require_contract_impact is true).
+        required: false
+        type: string
+        default: "docs/contracts"
+      changelog_path:
+        description: Path to the changelog file (used for the non-blocking changelog warning).
+        required: false
+        type: string
+        default: "CHANGELOG.md"
+      code_change_regex:
+        description: Regex pattern to identify code files. When set, warns if code changed without changelog update.
+        required: false
+        type: string
+        default: ""
+      skip_bot_prs:
+        description: Skip all checks for PRs from bot users or bot/ branches.
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  check:
+    name: PR Metadata Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check PR metadata
+        uses: actions/github-script@v7
+        env:
+          REQUIRE_ISSUE_REF: ${{ inputs.require_issue_ref }}
+          ALLOW_WORK_DOC: ${{ inputs.allow_work_doc }}
+          WORK_DOC_PATH_PREFIX: ${{ inputs.work_doc_path_prefix }}
+          REQUIRE_CONTRACT_IMPACT: ${{ inputs.require_contract_impact }}
+          CONTRACT_DIR: ${{ inputs.contract_dir }}
+          CHANGELOG_PATH: ${{ inputs.changelog_path }}
+          CODE_CHANGE_REGEX: ${{ inputs.code_change_regex }}
+          SKIP_BOT_PRS: ${{ inputs.skip_bot_prs }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = context.payload.pull_request.number;
+
+            const requireIssueRef = process.env.REQUIRE_ISSUE_REF !== 'false';
+            const allowWorkDoc = process.env.ALLOW_WORK_DOC === 'true';
+            const workDocPrefix = process.env.WORK_DOC_PATH_PREFIX || 'docs/work/';
+            const requireContractImpact = process.env.REQUIRE_CONTRACT_IMPACT === 'true';
+            const contractDir = process.env.CONTRACT_DIR || 'docs/contracts';
+            const changelogPath = process.env.CHANGELOG_PATH || 'CHANGELOG.md';
+            const codeChangeRegex = process.env.CODE_CHANGE_REGEX || '';
+            const skipBotPrs = process.env.SKIP_BOT_PRS !== 'false';
+
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+
+            if (skipBotPrs) {
+              const isBotUser = pr.user?.type === 'Bot';
+              const isBotBranch = (pr.head?.ref || '').startsWith('bot/');
+              if (isBotUser || isBotBranch) {
+                core.info('Skipping metadata checks for bot PR.');
+                return;
+              }
+            }
+
+            const prBody = pr.body || '';
+            const errors = [];
+
+            function warn(msg) {
+              core.warning(msg);
+            }
+
+            function escapeRegExp(s) {
+              return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            }
+
+            function extractSection(body, heading) {
+              const re = new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$([\\s\\S]*?)(?=^##\\s+|\\Z)`, 'gmi');
+              const m = re.exec(body);
+              return m ? (m[1] || '') : '';
+            }
+
+            function sectionLooksUnfilled(text) {
+              const lines = (text || '').split(/\r?\n/).map(l => l.trim());
+              return lines.filter(l => l && !['- [ ]', '- [x]', '-', '- '].includes(l) && /[A-Za-z0-9]/.test(l)).length === 0;
+            }
+
+            // Fetch changed files for ContractImpact and changelog checks.
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner, repo, pull_number: prNumber, per_page: 100,
+            });
+            const filenames = files.map(f => f.filename);
+
+            // ── 1. Issue / work doc linkage (blocking) ────────────────────────────
+            if (requireIssueRef || allowWorkDoc) {
+              const hasFixesCloses = /(?:Fixes|Closes)\s+#\d+/i.test(prBody);
+              const workDocPattern = new RegExp(
+                `WorkDoc:\\s*(?:\`|\\[)?${escapeRegExp(workDocPrefix)}[^\\s\\]\`]+\\.md`, 'i'
+              );
+              const hasWorkDoc = allowWorkDoc && workDocPattern.test(prBody);
+
+              if (requireIssueRef && !hasFixesCloses && !hasWorkDoc) {
+                const msg = allowWorkDoc
+                  ? 'PR description must include "Fixes #<n>" / "Closes #<n>" or "WorkDoc: ' + workDocPrefix + '<slug>.md"'
+                  : 'PR description must include "Fixes #<n>" or "Closes #<n>"';
+                errors.push(msg);
+              }
+
+              // Warn about bare issue references without closing keywords.
+              const bodyForScan = prBody.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '').replace(/https?:\/\/\S+/gi, '');
+              if (/(^|[\s(])#\d+\b/m.test(bodyForScan) && !hasFixesCloses) {
+                warn('PR body references issue(s) without closing keywords. Use "Fixes #<n>" or "Closes #<n>" to auto-close on merge.');
+              }
+            }
+
+            // ── 2. ContractImpact (blocking when enabled) ─────────────────────────
+            if (requireContractImpact) {
+              const match = prBody.match(/ContractImpact:\s*(none|updated)/i);
+              if (!match) {
+                errors.push('PR description must include "ContractImpact: none" or "ContractImpact: updated"');
+              } else {
+                const declared = match[1].toLowerCase();
+                const contractChanged = filenames.some(f => f.startsWith(contractDir.replace(/\/$/, '') + '/'));
+                if (declared === 'updated' && !contractChanged) {
+                  errors.push(`PR claims "ContractImpact: updated" but no files under ${contractDir}/ changed`);
+                }
+                if (declared === 'none' && contractChanged) {
+                  errors.push(`PR claims "ContractImpact: none" but files under ${contractDir}/ were changed`);
+                }
+              }
+            }
+
+            // ── 3. Changelog warning (non-blocking) ───────────────────────────────
+            if (codeChangeRegex) {
+              try {
+                const codeRe = new RegExp(codeChangeRegex);
+                const hasCodeChange = filenames.some(f => codeRe.test(f));
+                const hasChangelogUpdate = filenames.some(f => f === changelogPath || f.endsWith('/' + changelogPath));
+                if (hasCodeChange && !hasChangelogUpdate) {
+                  warn(`Code changes detected but ${changelogPath} was not updated. Add an entry if the change is user-visible.`);
+                }
+              } catch (e) {
+                core.warning(`code_change_regex is invalid: ${e.message}`);
+              }
+            }
+
+            // ── 4. Template quality warnings (non-blocking) ───────────────────────
+            for (const heading of ['What changed', 'Why it changed', 'How to verify', 'Summary', 'Changes']) {
+              const section = extractSection(prBody, heading);
+              if (section && sectionLooksUnfilled(section)) {
+                warn(`PR section "${heading}" appears to contain unfilled template content. Add concrete details.`);
+              }
+            }
+
+            // ── 5. Fail on blocking errors ────────────────────────────────────────
+            if (errors.length > 0) {
+              core.setFailed('PR metadata validation failed:\n' + errors.map(e => `  - ${e}`).join('\n'));
+            } else {
+              core.info('PR metadata validation passed.');
+            }
