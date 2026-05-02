@@ -82,5 +82,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.artifact_name }}
-          path: .test-output/
+          path: ${{ inputs.working_directory }}/.test-output/
           if-no-files-found: ignore
