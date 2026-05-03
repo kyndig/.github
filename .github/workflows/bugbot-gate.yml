@@ -6,6 +6,9 @@ on:
       sha:
         required: true
         type: string
+      pull_number:
+        required: true
+        type: number
       bugbot_check_name:
         required: false
         type: string
@@ -14,6 +17,14 @@ on:
         required: false
         type: number
         default: 15
+      qualifying_reviewer_login_regex:
+        required: false
+        type: string
+        default: ""
+      qualifying_comment_body_regexes:
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -27,70 +38,209 @@ jobs:
     timeout-minutes: ${{ inputs.timeout_minutes + 2 }}
 
     steps:
-      - name: Wait for Bugbot check
+      - name: Wait for Bugbot and verify no unresolved threads
         uses: actions/github-script@v7
         env:
           BUGBOT_GATE_SHA: ${{ inputs.sha }}
+          BUGBOT_GATE_PULL_NUMBER: ${{ inputs.pull_number }}
           BUGBOT_GATE_CHECK_NAME: ${{ inputs.bugbot_check_name }}
           BUGBOT_GATE_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+          BUGBOT_GATE_REVIEWER_REGEX: ${{ inputs.qualifying_reviewer_login_regex }}
+          BUGBOT_GATE_BODY_REGEXES: ${{ inputs.qualifying_comment_body_regexes }}
         with:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const sha = process.env.BUGBOT_GATE_SHA;
+            const pullNumber = Number(process.env.BUGBOT_GATE_PULL_NUMBER);
             const target = process.env.BUGBOT_GATE_CHECK_NAME;
             const timeoutMinutes = Number(process.env.BUGBOT_GATE_TIMEOUT_MINUTES);
+            const reviewerRegexRaw = process.env.BUGBOT_GATE_REVIEWER_REGEX || '';
+            const bodyRegexesRaw = process.env.BUGBOT_GATE_BODY_REGEXES || '';
 
-            if (!sha) {
-              core.setFailed("Missing required input: sha");
-              return;
-            }
-
-            if (!target) {
-              core.setFailed("Missing required input: bugbot_check_name");
-              return;
-            }
-
-            if (!Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) {
-              core.setFailed("Invalid input: timeout_minutes must be a positive number");
-              return;
-            }
+            if (!sha) { core.setFailed('Missing required input: sha'); return; }
+            if (!Number.isFinite(pullNumber) || pullNumber <= 0) { core.setFailed('Missing or invalid input: pull_number'); return; }
+            if (!target) { core.setFailed('Missing required input: bugbot_check_name'); return; }
+            if (!Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) { core.setFailed('Invalid input: timeout_minutes must be a positive number'); return; }
 
             const timeoutMs = timeoutMinutes * 60 * 1000;
             const start = Date.now();
 
+            // ── Step 1: Wait for the Bugbot check run to complete ─────────────────
+
+            core.info(`Waiting for '${target}' check run on ${sha}…`);
+
             while (true) {
               const { data } = await github.rest.checks.listForRef({
-                owner,
-                repo,
-                ref: sha,
-                per_page: 100
+                owner, repo, ref: sha, per_page: 100,
               });
 
-              const matching = data.check_runs.filter(run => run.name === target);
+              const matching = data.check_runs.filter(r => r.name === target);
               const latest = matching.sort((a, b) => b.id - a.id)[0];
 
               if (latest) {
-                core.info(
-                  `Latest ${target} status is ${latest.status} (conclusion: ${latest.conclusion ?? "n/a"})`
-                );
+                core.info(`${target}: status=${latest.status} conclusion=${latest.conclusion ?? 'n/a'}`);
               }
 
-              if (latest && latest.status === "completed") {
-                core.info(`Found completed ${target} with conclusion: ${latest.conclusion}`);
-
-                if (latest.conclusion !== "success") {
-                  core.setFailed(`${target} conclusion was ${latest.conclusion}`);
-                }
-
-                return;
+              if (latest?.status === 'completed') {
+                core.info(`${target} completed with conclusion: ${latest.conclusion}`);
+                // Give Bugbot a moment to finish posting review comments.
+                await new Promise(r => setTimeout(r, 5000));
+                break;
               }
 
               if (Date.now() - start > timeoutMs) {
-                core.setFailed(`Timed out waiting for ${target}`);
+                core.setFailed(`Timed out after ${timeoutMinutes}m waiting for '${target}' on ${sha}`);
                 return;
               }
 
-              core.info(`Still waiting for ${target} on ${sha}...`);
-              await new Promise(resolve => setTimeout(resolve, 15000));
+              await new Promise(r => setTimeout(r, 15000));
+              core.info(`Still waiting for '${target}'…`);
+            }
+
+            // ── Step 2: Guard against a concurrent push changing the PR head ──────
+
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: pullNumber });
+            if (pr.head.sha !== sha) {
+              core.setFailed(`Race: PR head changed from ${sha} to ${pr.head.sha} during evaluation`);
+              return;
+            }
+
+            // ── Step 3: Determine the cycle boundary (timestamp of the latest push) ─
+
+            const timelineEvents = await github.paginate(
+              github.rest.issues.listEventsForTimeline,
+              { owner, repo, issue_number: pullNumber, per_page: 100 },
+            );
+
+            const parseMs = (event, type) => {
+              // For 'committed' events prefer created_at (GitHub push timestamp) over
+              // author/committer dates, which are user-controllable and can be
+              // arbitrarily old (cherry-picks, offline work, pre-created commits).
+              // Using an old author date as the cycle boundary would cause prior-cycle
+              // Bugbot comments to satisfy `ts > cycleBoundaryMs` and block the gate.
+              const candidates = type === 'committed'
+                ? [event?.created_at, event?.committer?.date, event?.author?.date]
+                : [event?.created_at];
+              for (const raw of candidates) {
+                const ms = Date.parse(String(raw || ''));
+                if (!Number.isNaN(ms)) return ms;
+              }
+              return Number.NaN;
+            };
+
+            const latestPushMs = timelineEvents.reduce((best, event) => {
+              const type = String(event?.event || '');
+              if (type === 'head_ref_force_pushed') {
+                const afterSha = String(event?.after_commit_id || '');
+                if (afterSha && afterSha !== sha) return best;
+                const ms = parseMs(event, type);
+                return Number.isNaN(ms) ? best : Math.max(best, ms);
+              }
+              if (type === 'committed') {
+                if (event?.sha !== sha) return best;
+                const ms = parseMs(event, type);
+                return Number.isNaN(ms) ? best : Math.max(best, ms);
+              }
+              return best;
+            }, Number.NEGATIVE_INFINITY);
+
+            const fallbackMs = Date.parse(String(pr.created_at || ''));
+            const cycleBoundaryMs = Number.isFinite(latestPushMs) ? latestPushMs : fallbackMs;
+            if (Number.isNaN(cycleBoundaryMs)) {
+              core.setFailed(`Unable to determine cycle boundary for PR #${pullNumber}`);
+              return;
+            }
+            core.info(`Cycle boundary (latest push): ${new Date(cycleBoundaryMs).toISOString()}`);
+
+            // ── Step 4: Build comment qualification matchers ───────────────────────
+
+            const splitTerms = raw =>
+              String(raw || '').split(/\r?\n|,|;|\|\|/).map(s => s.trim()).filter(Boolean);
+
+            const safeRegex = pattern => {
+              try { return new RegExp(pattern, 'i'); }
+              catch (e) { core.setFailed(`Invalid regex '${pattern}': ${e.message}`); return null; }
+            };
+
+            const reviewerRegex = reviewerRegexRaw.trim() ? safeRegex(reviewerRegexRaw.trim()) : null;
+            const bodyRegexes = splitTerms(bodyRegexesRaw).map(safeRegex).filter(Boolean);
+
+            const defaultBodyMatchers = [
+              /<!--\s*\*\*Low Severity\*\*\s*-->/i,
+              /<!--\s*\*\*Medium Severity\*\*\s*-->/i,
+              /<!--\s*\*\*High Severity\*\*\s*-->/i,
+              /<!--\s*\*\*Critical Severity\*\*\s*-->/i,
+              /https:\/\/cursor\.com\/fix-in-cursor/i,
+            ];
+
+            const isQualifying = comment => {
+              const login = String(comment?.author?.login || '').toLowerCase();
+              const body = String(comment?.body || '');
+              const reviewerMatch = reviewerRegex
+                ? reviewerRegex.test(login)
+                : (login === 'cursor' || login.includes('cursor'));
+              const bodyMatch = bodyRegexes.length > 0
+                ? bodyRegexes.some(r => r.test(body))
+                : defaultBodyMatchers.some(r => r.test(body));
+              return reviewerMatch && bodyMatch;
+            };
+
+            // ── Step 5: Fetch review threads and evaluate ─────────────────────────
+
+            const query = `
+              query($owner: String!, $repo: String!, $pullNumber: Int!, $after: String) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $pullNumber) {
+                    reviewThreads(first: 100, after: $after) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes {
+                        isResolved
+                        comments(first: 50) {
+                          nodes { body path line createdAt author { login } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            let allThreads = [];
+            let after = null;
+            while (true) {
+              const data = await github.graphql(query, { owner, repo, pullNumber, after });
+              const rt = data.repository.pullRequest.reviewThreads;
+              allThreads = allThreads.concat(rt.nodes ?? []);
+              if (!rt.pageInfo.hasNextPage) break;
+              after = rt.pageInfo.endCursor;
+            }
+
+            const qualifying = allThreads.filter(t =>
+              (t?.comments?.nodes ?? []).some(c => isQualifying(c))
+            );
+
+            const currentCycle = qualifying.filter(t =>
+              (t?.comments?.nodes ?? []).some(c => {
+                if (!isQualifying(c)) return false;
+                const ts = Date.parse(String(c?.createdAt || ''));
+                return !Number.isNaN(ts) && ts > cycleBoundaryMs;
+              })
+            );
+
+            const unresolved = currentCycle.filter(t => !t.isResolved);
+
+            core.info(`Qualifying threads — all cycles: ${qualifying.length}, current cycle: ${currentCycle.length}, unresolved: ${unresolved.length}`);
+
+            if (currentCycle.length === 0) {
+              core.info('No qualifying Bugbot threads in the current cycle — gate passes.');
+              return;
+            }
+
+            if (unresolved.length > 0) {
+              core.setFailed(
+                `Found ${unresolved.length} unresolved Bugbot thread(s) in the current cycle. Resolve them before merging.`
+              );
+            } else {
+              core.info(`All ${currentCycle.length} Bugbot thread(s) in the current cycle are resolved — gate passes.`);
             }

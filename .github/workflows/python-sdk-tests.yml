@@ -1,0 +1,86 @@
+name: Python SDK Tests
+
+# Reusable workflow for Python SDK test suites.
+# Designed for PR fast-lane (skip network tests) and nightly/manual broad runs.
+# Intended to be called from a CI After Gate workflow triggered by workflow_run.
+#
+# The job name "SDK Tests" is stable — branch protection rulesets reference it.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit SHA or ref to check out.
+        required: true
+        type: string
+      python_version:
+        required: false
+        type: string
+        default: "3.11"
+      working_directory:
+        description: Directory to run test commands from.
+        required: false
+        type: string
+        default: "."
+      install_command:
+        description: Dependency install command. Leave empty to skip.
+        required: false
+        type: string
+        default: ""
+      test_command:
+        description: Main test command.
+        required: true
+        type: string
+      skip_network_tests:
+        description: Set SKIP_NETWORK_TESTS=1 env var during the test run.
+        required: false
+        type: boolean
+        default: true
+      upload_artifacts:
+        description: Upload .test-output/ artifacts after the run.
+        required: false
+        type: boolean
+        default: false
+      artifact_name:
+        description: Name for the uploaded artifact (used when upload_artifacts is true).
+        required: false
+        type: string
+        default: "sdk-test-output"
+
+permissions:
+  contents: read
+
+jobs:
+  sdk-tests:
+    name: SDK Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install dependencies
+        if: ${{ inputs.install_command != '' }}
+        run: ${{ inputs.install_command }}
+
+      - name: Run tests
+        env:
+          SKIP_NETWORK_TESTS: ${{ inputs.skip_network_tests && '1' || '0' }}
+        run: ${{ inputs.test_command }}
+
+      - name: Upload test output
+        if: ${{ inputs.upload_artifacts && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ inputs.working_directory }}/.test-output/
+          if-no-files-found: ignore

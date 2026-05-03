@@ -1,0 +1,82 @@
+name: Node pnpm Playwright
+
+# Reusable workflow: install, build, run Playwright tests.
+# Intended to be called from a CI After Gate workflow triggered by workflow_run.
+#
+# The job name "Playwright" is stable — branch protection rulesets reference it.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit SHA or ref to check out.
+        required: true
+        type: string
+      node_version:
+        required: false
+        type: string
+        default: "lts/*"
+      pnpm_version:
+        description: pnpm version to install. Leave empty to read from packageManager in package.json.
+        required: false
+        type: string
+        default: ""
+      install_command:
+        required: false
+        type: string
+        default: "pnpm install --frozen-lockfile"
+      install_browsers_command:
+        required: false
+        type: string
+        default: "pnpm exec playwright install --with-deps chromium"
+      build_command:
+        required: false
+        type: string
+        default: "pnpm build"
+      test_command:
+        required: false
+        type: string
+        default: "pnpm exec playwright test"
+      working_directory:
+        description: Working directory for all commands.
+        required: false
+        type: string
+        default: "."
+
+permissions:
+  contents: read
+
+jobs:
+  playwright:
+    name: Playwright
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ inputs.pnpm_version }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: ${{ inputs.install_command }}
+
+      - name: Install Playwright browsers
+        run: ${{ inputs.install_browsers_command }}
+
+      - name: Build
+        run: ${{ inputs.build_command }}
+
+      - name: Run Playwright tests
+        run: ${{ inputs.test_command }}

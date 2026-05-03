@@ -1,0 +1,68 @@
+name: Node pnpm Build
+
+# Reusable workflow: install and build.
+# Intended to be called from a CI After Gate workflow triggered by workflow_run.
+#
+# The job name "Build" is stable — branch protection rulesets reference it.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit SHA or ref to check out.
+        required: true
+        type: string
+      node_version:
+        required: false
+        type: string
+        default: "lts/*"
+      pnpm_version:
+        description: pnpm version to install. Leave empty to read from packageManager in package.json.
+        required: false
+        type: string
+        default: ""
+      install_command:
+        required: false
+        type: string
+        default: "pnpm install --frozen-lockfile"
+      build_command:
+        required: false
+        type: string
+        default: "pnpm build"
+      working_directory:
+        description: Working directory for all commands.
+        required: false
+        type: string
+        default: "."
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ inputs.pnpm_version }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: ${{ inputs.install_command }}
+
+      - name: Build
+        run: ${{ inputs.build_command }}

@@ -1,0 +1,128 @@
+name: Raycast CI
+
+# Reusable workflow for Raycast extension repositories.
+# Validates Raycast Store metadata, applies migration drift check, builds, lints, and runs optional tests.
+# Intended to be called from a CI After Gate workflow triggered by workflow_run.
+#
+# Requires macOS because the Raycast CLI only runs on macOS.
+# The job name "Raycast CI" is stable — branch protection rulesets reference it.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit SHA or ref to check out.
+        required: true
+        type: string
+      node_version:
+        description: Node.js version for the extension.
+        required: false
+        type: string
+        default: "22"
+      raycast_migration_version:
+        description: "@raycast/migration version to use for the drift check. Pin to your @raycast/api minor."
+        required: false
+        type: string
+        default: "1.103.0"
+      build_command:
+        description: Build command (Raycast Store requires a build export).
+        required: false
+        type: string
+        default: "npx ray build -e dist"
+      lint_command:
+        description: Lint command (Raycast Store requirement).
+        required: false
+        type: string
+        default: "npx ray lint"
+      typecheck_command:
+        description: Type check command. Leave empty to skip.
+        required: false
+        type: string
+        default: "npm run type-check"
+      test_command:
+        description: Unit test command. Leave empty to skip.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Raycast CI
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      NPM_CONFIG_CACHE: .npm-cache
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Restore npm cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.NPM_CONFIG_CACHE }}
+          key: ${{ runner.os }}-npm-cache-node${{ inputs.node_version }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-cache-node${{ inputs.node_version }}-
+
+      - name: Verify Raycast Store metadata
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const { execSync } = require("child_process");
+
+          function fail(msg) { console.error(msg); process.exit(1); }
+
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+
+          if (pkg.license !== "MIT") fail(`Expected package.json license to be MIT, got: ${pkg.license}`);
+          if (typeof pkg.author !== "string" || !pkg.author.trim()) fail("Expected package.json author to be a non-empty string (your Raycast username).");
+          if (!fs.existsSync("package-lock.json")) fail("Expected package-lock.json to exist (Raycast requires npm + lockfile).");
+
+          try {
+            execSync("git ls-files --error-unmatch package-lock.json", { stdio: "ignore" });
+          } catch {
+            fail("Expected package-lock.json to be committed (tracked by git).");
+          }
+
+          console.log("Store metadata OK");
+          NODE
+
+      - name: Ensure Raycast migrations are applied
+        env:
+          RAYCAST_MIGRATION_VERSION: ${{ inputs.raycast_migration_version }}
+        run: |
+          set -euo pipefail
+          npx -y "@raycast/migration@${RAYCAST_MIGRATION_VERSION}" "$GITHUB_WORKSPACE"
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Raycast migrations produced uncommitted changes. Run 'npx -y @raycast/migration@${RAYCAST_MIGRATION_VERSION} .' locally and commit the result."
+            git status --porcelain
+            git diff
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: ${{ inputs.build_command }}
+
+      - name: Lint
+        run: ${{ inputs.lint_command }}
+
+      - name: Typecheck
+        if: ${{ inputs.typecheck_command != '' }}
+        run: ${{ inputs.typecheck_command }}
+
+      - name: Unit tests
+        if: ${{ inputs.test_command != '' }}
+        run: ${{ inputs.test_command }}
