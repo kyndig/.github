@@ -114,8 +114,13 @@ jobs:
             );
 
             const parseMs = (event, type) => {
+              // For 'committed' events prefer created_at (GitHub push timestamp) over
+              // author/committer dates, which are user-controllable and can be
+              // arbitrarily old (cherry-picks, offline work, pre-created commits).
+              // Using an old author date as the cycle boundary would cause prior-cycle
+              // Bugbot comments to satisfy `ts > cycleBoundaryMs` and block the gate.
               const candidates = type === 'committed'
-                ? [event?.author?.date, event?.committer?.date, event?.created_at]
+                ? [event?.created_at, event?.committer?.date, event?.author?.date]
                 : [event?.created_at];
               for (const raw of candidates) {
                 const ms = Date.parse(String(raw || ''));
