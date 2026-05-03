@@ -183,7 +183,7 @@ jobs:
               const bodyMatch = bodyRegexes.length > 0
                 ? bodyRegexes.some(r => r.test(body))
                 : defaultBodyMatchers.some(r => r.test(body));
-              return reviewerMatch || bodyMatch;
+              return reviewerMatch && bodyMatch;
             };
 
             // ── Step 5: Fetch review threads and evaluate ─────────────────────────
