@@ -217,8 +217,10 @@ jobs:
             // Bugbot may post review comments slightly after its check run completes.
             // Poll for up to SETTLE_MS to let the GitHub API reflect all new comments
             // before making a pass/fail decision. Fail fast if unresolved findings
-            // appear; require STABLE_ROUNDS consecutive unchanged counts before
-            // declaring a clean pass to avoid false negatives from delayed visibility.
+            // appear. Once a non-zero current-cycle count has been observed, require
+            // STABLE_ROUNDS consecutive unchanged counts before declaring a clean
+            // pass. A stable zero count must NOT early-exit — keep polling until
+            // SETTLE_MS so late-arriving threads are not missed.
 
             const SETTLE_MS = 30_000;
             const POLL_MS = 5_000;
@@ -284,7 +286,9 @@ jobs:
                 break;
               }
 
-              if (lastResult.currentCycle === prevCurrentCycle) {
+              // Only early-exit on stability once threads have appeared. A stable
+              // zero means "nothing yet", not "nothing will arrive".
+              if (lastResult.currentCycle > 0 && lastResult.currentCycle === prevCurrentCycle) {
                 stableRounds++;
                 if (stableRounds >= STABLE_ROUNDS) {
                   core.info(`Thread count stable at ${lastResult.currentCycle} for ${STABLE_ROUNDS} polls — proceeding.`);
