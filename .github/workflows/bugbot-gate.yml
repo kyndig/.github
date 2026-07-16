@@ -120,12 +120,22 @@ jobs:
             }
 
             // ── Step 3: Guard against a concurrent push changing the PR head ──────
+            // Re-checked during settle polling and again before the final verdict so
+            // a push mid-evaluation cannot pass or fail against a stale cycle boundary.
+
+            const assertHeadUnchanged = async (prData) => {
+              const headSha = prData
+                ? prData.head.sha
+                : (await github.rest.pulls.get({ owner, repo, pull_number: pullNumber })).data.head.sha;
+              if (headSha !== sha) {
+                core.setFailed(`Race: PR head changed from ${sha} to ${headSha} during evaluation`);
+                return false;
+              }
+              return true;
+            };
 
             const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: pullNumber });
-            if (pr.head.sha !== sha) {
-              core.setFailed(`Race: PR head changed from ${sha} to ${pr.head.sha} during evaluation`);
-              return;
-            }
+            if (!(await assertHeadUnchanged(pr))) return;
 
             // ── Step 4: Determine the cycle boundary (timestamp of the latest push) ─
 
@@ -278,6 +288,8 @@ jobs:
             let lastResult;
 
             while (true) {
+              if (!(await assertHeadUnchanged())) return;
+
               lastResult = await fetchThreads();
               core.info(`Qualifying threads — all cycles: ${lastResult.qualifying}, current cycle: ${lastResult.currentCycle}, unresolved: ${lastResult.unresolved}`);
 
@@ -309,6 +321,10 @@ jobs:
             }
 
             // ── Step 7: Final verdict ─────────────────────────────────────────────
+            // Re-check head before committing to pass/fail — the last poll may have
+            // completed seconds ago, and a push since then invalidates this cycle.
+
+            if (!(await assertHeadUnchanged())) return;
 
             if (lastResult.currentCycle === 0) {
               core.info('No qualifying Bugbot threads in the current cycle — gate passes.');
