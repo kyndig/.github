@@ -2,7 +2,7 @@
 
 Current state of PR workflows, branch protection, and repository settings across active kyndig repositories.
 
-Last updated: 2026-05-02
+Last updated: 2026-05-11
 
 ---
 
@@ -10,6 +10,7 @@ Last updated: 2026-05-02
 
 | Repo | Default Branch | Delete Branch on Merge | main Protected | Required Status Checks |
 |------|---------------|----------------------|----------------|------------------------|
+| TF | feat/foundation | ❌ | ❌ | — |
 | ritz | main | ✅ | ❌ | — |
 | kynd-web | main | ✅ | ✅ | `Check` |
 | kynd-web-new | main | ✅ | ✅ | `Quality`, `Build`, `Playwright` |
@@ -25,9 +26,11 @@ Last updated: 2026-05-02
 
 ### Gaps to close
 
-**Branch deletion after merge** — must be enabled on: `switchto`, `varde-web`, `faen-ta`
+**Branch deletion after merge** — must be enabled on: `TF`, `switchto`, `varde-web`, `faen-ta`
 
-**Main branch protection** — must be added on: `ritz`, `switchto`, `varde-web`, `yr-wfc`, `brreg-search`, `faen-ta`, `kynd-bid-system`, `spork`, `spork-web`
+**Main branch protection** — must be added on: `TF`, `ritz`, `switchto`, `varde-web`, `yr-wfc`, `brreg-search`, `faen-ta`, `kynd-bid-system`, `spork`, `spork-web`
+
+**Default branch normalisation** — `TF` currently uses `feat/foundation` as default branch; align to `main` before enforcing org-wide `main` rulesets.
 
 **Protected repos to normalise** — `kynd-web` uses `Check` (stale name from an old local CI job), `kynd-web-new` and `varde` use custom local check names. All three need to converge to the shared `Bugbot Gate` baseline once onboarded.
 
@@ -82,6 +85,24 @@ Note: `kynd-web-new` already has the canonical `Quality`, `Build`, `Playwright` 
 ### switchto
 
 No workflow files found. No protection. Branch deletion disabled.
+
+---
+
+### TF (SvelteKit/npm web app)
+
+| Workflow | Trigger | Notes |
+|----------|---------|-------|
+| None | — | No PR checks configured. `package.json` exposes `npm run check` and `npm run build`. |
+
+**Bugbot first**: No (no gate configured).
+**Expensive CI on `pull_request`**: No (no PR CI configured).
+**Shared gate**: Not yet onboarded.
+
+Recommended target checks after onboarding:
+
+- `Bugbot Gate`
+- `CI After Gate / Quality` (`npm run check`)
+- `CI After Gate / Build` (`npm run build`)
 
 ---
 
@@ -196,6 +217,7 @@ The shared gate combines check-run wait (from `ritz`) with cycle-boundary logic 
 | Category | Repos |
 |----------|-------|
 | Web app, pnpm | `kynd-web`, `kynd-web-new`, `spork-web` |
+| Web app, npm (SvelteKit) | `TF` |
 | Node/pnpm monorepo | `kynd-bid-system` |
 | Raycast extension | `yr-wfc`, `brreg-search` |
 | Swift/macOS app | `ritz` |

@@ -11,14 +11,16 @@ Apply these before or alongside the shared workflow rollout.
 
 Enable `delete_branch_on_merge` on every repo. This prevents stale branches accumulating after PRs are merged.
 
-**Currently missing on:** `switchto`, `varde-web`, `faen-ta`
+**Currently missing on:** `TF`, `switchto`, `varde-web`, `faen-ta`
 
 Apply via GitHub UI (Settings → General → Pull Requests → Automatically delete head branches)
 or via the API / Terraform if you manage settings programmatically.
 
 ### Default branch
 
-All active repos already use `main` as the default branch.
+Most active repos use `main` as the default branch.
+
+**Current exception:** `TF` uses `feat/foundation` as default branch and should be normalised to `main` before enforcing org-wide `main` rulesets.
 
 ---
 
@@ -29,13 +31,13 @@ Minimum ruleset or branch protection configuration for `main`:
 | Setting | Value | Reason |
 |---------|-------|--------|
 | Require a pull request before merging | ✅ | Core policy: no direct pushes to main |
-| Require approvals | 0 (or 1 if preferred) | Gate is the quality signal; reviews are optional |
-| Dismiss stale reviews when new commits are pushed | ✅ recommended | Prevents stale approvals from carrying through |
+| Require approvals | 0 | Gate is the quality signal; human review approval is not required |
+| Dismiss stale reviews when new commits are pushed | N/A | No approval requirement to dismiss |
 | Require status checks to pass before merging | ✅ | See required checks below |
 | Require branches to be up to date before merging | ✅ | Prevents merging stale branches that bypass gate |
 | Do not allow bypassing the above settings | ✅ | Enforce admins too |
 
-**Currently unprotected:** `ritz`, `switchto`, `varde-web`, `yr-wfc`, `brreg-search`, `faen-ta`, `kynd-bid-system`, `spork`, `spork-web`
+**Currently unprotected:** `TF`, `ritz`, `switchto`, `varde-web`, `yr-wfc`, `brreg-search`, `faen-ta`, `kynd-bid-system`, `spork`, `spork-web`
 
 **Currently protected but needing normalisation:** `kynd-web` (requires `Check` — stale name), `kynd-web-new` (no `Bugbot Gate`), `varde` (no `Bugbot Gate`)
 
@@ -59,6 +61,7 @@ Once you have confirmed exact emitted check names from a real PR run, add the re
 
 | Category | Expected check names |
 |----------|---------------------|
+| Web npm (SvelteKit) | `CI After Gate / Quality`, `CI After Gate / Build` |
 | Web pnpm | `CI After Gate / Quality`, `CI After Gate / Build` |
 | Web pnpm + Playwright | `CI After Gate / Quality`, `CI After Gate / Build`, `CI After Gate / Playwright` |
 | Raycast extension | `CI After Gate / Raycast CI` |

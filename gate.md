@@ -113,24 +113,20 @@ If the current workspace contains both:
 
 - implement both layers consistently
 
-## v1 semantics
+## Gate semantics (v1 implemented)
 
-v1 must do only this:
+The gate passes when **both** conditions are true:
 
-- accept a PR head SHA
-- wait for the named Bugbot check
-- pass if the check concludes `success`
-- fail otherwise
+- The named Bugbot check run completes with conclusion `success`. Any other conclusion (`failure`, `cancelled`, `timed_out`, `neutral`, `skipped`, `action_required`) fails the gate immediately.
+- No unresolved qualifying Bugbot review threads exist for the current push cycle (threads whose qualifying comment was posted after the most recent commit or force-push to the PR head SHA).
 
-v1 must **not** do this:
+Current-cycle scoping: a comment belongs to the current cycle when its `createdAt` timestamp is at or after the latest push boundary (with a 1-second tolerance for same-second GitHub API timestamps).
 
-- inspect Bugbot comments
-- inspect unresolved review threads
-- parse severities
-- ignore stale findings
-- support manual acknowledgment exceptions
+Out of scope in v1:
 
-Those are future enhancements and are deliberately out of scope for now.
+- Severity-level filtering (Low / Medium / High / Critical treated equally)
+- Manual acknowledgment exceptions
+- Stale-thread dismissal
 
 ## Required stable contract
 
@@ -163,94 +159,20 @@ Do not casually rename these after rollout begins, because required checks and r
 Create a reusable workflow in the shared org repo with:
 
 - `workflow_call`
-- input `sha`
+- input `sha` (required)
+- input `pull_number` (required) — needed for the cycle-boundary and thread checks
 - input `bugbot_check_name`
 - input `timeout_minutes`
+- input `qualifying_reviewer_login_regex` — override the default Bugbot author allowlist
+- input `qualifying_comment_body_regexes` — override the default body pattern matchers
+- input `require_thread_resolution` — set to `false` to skip the unresolved-thread check (Bugbot `success` is still required); useful during staged rollout
 
 Recommended defaults:
 
 - `bugbot_check_name: Cursor Bugbot`
 - `timeout_minutes: 15`
 
-### Example reusable workflow
-
-```yaml
-name: Bugbot Gate
-
-on:
-  workflow_call:
-    inputs:
-      sha:
-        required: true
-        type: string
-      bugbot_check_name:
-        required: false
-        type: string
-        default: Cursor Bugbot
-      timeout_minutes:
-        required: false
-        type: number
-        default: 15
-
-permissions:
-  contents: read
-  checks: read
-  pull-requests: read
-
-jobs:
-  gate:
-    name: Bugbot Gate
-    runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.timeout_minutes + 2 }}
-
-    steps:
-      - name: Wait for Bugbot check
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const sha = "${{ inputs.sha }}";
-            const target = "${{ inputs.bugbot_check_name }}";
-            const timeoutMs = Number("${{ inputs.timeout_minutes }}") * 60 * 1000;
-            const start = Date.now();
-
-            while (true) {
-              const { data } = await github.rest.checks.listForRef({
-                owner,
-                repo,
-                ref: sha,
-                per_page: 100
-              });
-
-              const matching = data.check_runs.filter(run => run.name === target);
-              const latest = matching.sort((a, b) => b.id - a.id)[0];
-
-              if (latest) {
-                core.info(
-                  `Latest ${target} status is ${latest.status} (conclusion: ${latest.conclusion ?? "n/a"})`
-                );
-              }
-
-              if (latest && latest.status === "completed") {
-                core.info(`Found completed ${target} with conclusion: ${latest.conclusion}`);
-
-                if (latest.conclusion !== "success") {
-                  core.setFailed(`${target} conclusion was ${latest.conclusion}`);
-                }
-
-                return;
-              }
-
-              if (Date.now() - start > timeoutMs) {
-                core.setFailed(`Timed out waiting for ${target}`);
-                return;
-              }
-
-              core.info(`Still waiting for ${target} on ${sha}...`);
-              await new Promise(resolve => setTimeout(resolve, 15000));
-            }
-```
+The canonical implementation lives in `.github/workflows/bugbot-gate.yml` in the shared org repo. Refer to that file rather than re-implementing the logic; the script runs under `actions/github-script@v7` and must pass all inputs through environment variables (not inline `${{ }}` template substitution in the script body) to avoid script-injection vulnerabilities.
 
 ## Thin per-repo caller workflow
 
@@ -277,6 +199,7 @@ jobs:
     uses: ORG/.github/.github/workflows/bugbot-gate.yml@main
     with:
       sha: ${{ github.event.pull_request.head.sha }}
+      pull_number: ${{ github.event.pull_request.number }}
       bugbot_check_name: Cursor Bugbot
       timeout_minutes: 15
 ```
@@ -311,6 +234,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
       - uses: pnpm/action-setup@v4
         with:
           run_install: false
@@ -330,6 +254,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
       - uses: pnpm/action-setup@v4
         with:
           run_install: false
@@ -346,6 +271,7 @@ Important:
 - if expensive CI remains on direct `pull_request`, the gate does not meaningfully save minutes
 - the user’s explicit goal is to avoid running expensive checks before Bugbot is clean
 - use `github.event.workflow_run.head_sha` when checking out in downstream CI so tests run on the same commit that passed the gate
+- set `repository: github.event.workflow_run.head_repository.full_name` in checkout steps so fork PRs can check out from the contributor’s fork; never expose repo secrets in these jobs
 
 ## Org ruleset instructions
 
@@ -418,7 +344,7 @@ If edits are not requested, provide the exact files and instructions directly.
 - using one giant workflow with `needs:` and calling that a hierarchy
 - renaming gate checks after required-check rulesets exist
 - duplicating Bugbot logic independently in many repos
-- starting with unresolved-comment semantics in v1
+- embedding gate logic in per-repo workflows instead of using the shared reusable workflow
 - blocking on not having every target repo available locally
 
 ## Future GitHub App compatibility
