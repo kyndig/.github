@@ -1,0 +1,14 @@
+{
+  "scripts": {
+    "check": "pnpm turbo lint typecheck format:check",
+    "check:fix": "pnpm turbo lint:fix format:write",
+    "lint": "pnpm turbo lint",
+    "lint:fix": "pnpm turbo lint:fix",
+    "typecheck": "pnpm turbo typecheck",
+    "format:check": "pnpm turbo format:check",
+    "format:write": "pnpm turbo format:write",
+    "build": "pnpm turbo build",
+    "test": "pnpm turbo test",
+    "test:e2e": "pnpm turbo test:e2e"
+  }
+}
