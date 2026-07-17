@@ -445,7 +445,7 @@ Run these scenarios on the pilot repo before locking required checks via the org
 `Bugbot Gate` passes only when **both** conditions are true:
 
 - The `Cursor Bugbot` check run has completed with conclusion `success`. Any other conclusion (`failure`, `cancelled`, `timed_out`, `neutral`, `skipped`, `action_required`) fails the gate immediately — even if no unresolved threads exist.
-- No unresolved Bugbot review threads exist for the **current push cycle** (threads whose qualifying comment was posted after the most recent commit or force-push to the PR head SHA, with a 1-second timestamp tolerance).
+- No unresolved Bugbot review threads exist for the **current push cycle** (threads whose qualifying comment was posted at or after the most recent commit or force-push to the PR head SHA).
 
 Current-cycle scoping means resolving old threads from a previous commit does not re-open the gate; only threads from the latest push count.
 

@@ -120,7 +120,7 @@ The gate passes when **both** conditions are true:
 - The named Bugbot check run completes with conclusion `success`. Any other conclusion (`failure`, `cancelled`, `timed_out`, `neutral`, `skipped`, `action_required`) fails the gate immediately.
 - No unresolved qualifying Bugbot review threads exist for the current push cycle (threads whose qualifying comment was posted after the most recent commit or force-push to the PR head SHA).
 
-Current-cycle scoping: a comment belongs to the current cycle when its `createdAt` timestamp is at or after the latest push boundary (with a 1-second tolerance for same-second GitHub API timestamps).
+Current-cycle scoping: a comment belongs to the current cycle when its `createdAt` timestamp is at or after the latest push boundary (`>=`). Inclusive comparison covers same-second GitHub API timestamps without pulling prior-cycle comments into the window.
 
 Out of scope in v1:
 
