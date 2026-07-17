@@ -184,10 +184,6 @@ jobs:
             }
             core.info(`Cycle boundary (latest push): ${new Date(cycleBoundaryMs).toISOString()}`);
 
-            // Subtract 1 s to tolerate same-second GitHub API timestamps where the
-            // Bugbot comment and the push boundary share an identical second.
-            const boundaryWithToleranceMs = cycleBoundaryMs - 1000;
-
             // ── Step 5: Build comment qualification matchers ───────────────────────
 
             const splitTerms = raw =>
@@ -270,8 +266,11 @@ jobs:
               const currentCycle = qualifying.filter(t =>
                 (t?.comments?.nodes ?? []).some(c => {
                   if (!isQualifying(c)) return false;
+                  // Inclusive (>=) so comments that share the push's second still
+                  // count. Do not subtract a tolerance — that would pull prior-cycle
+                  // comments from up to 1 s before the push into the current cycle.
                   const ts = Date.parse(String(c?.createdAt || ''));
-                  return !Number.isNaN(ts) && ts >= boundaryWithToleranceMs;
+                  return !Number.isNaN(ts) && ts >= cycleBoundaryMs;
                 })
               );
               const unresolved = currentCycle.filter(t => !t.isResolved);
