@@ -1,0 +1,14 @@
+{
+  "scripts": {
+    "check": "pnpm lint && pnpm typecheck && pnpm format:check",
+    "check:fix": "pnpm lint:fix && pnpm format:write",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit",
+    "format:check": "prettier --check .",
+    "format:write": "prettier --write .",
+    "build": "pnpm run -r build",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
+  }
+}

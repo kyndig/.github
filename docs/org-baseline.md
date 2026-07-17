@@ -24,6 +24,14 @@ Most active repos use `main` as the default branch.
 
 ---
 
+## Local Script Baseline
+
+For cross-repo local developer commands and CI command naming, use `docs/script-contract.md`.
+
+Keep canonical script names stable (`check`, `check:fix`, `lint`, `typecheck`, `format:check`, `build`, `test`) and adapt command bodies per stack.
+
+---
+
 ## Main Branch Protection (apply to every active repo)
 
 Minimum ruleset or branch protection configuration for `main`:

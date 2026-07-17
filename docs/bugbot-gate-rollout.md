@@ -12,6 +12,8 @@ The shared org-level gate lives in this repo at:
 
 Each active application repo needs two workflow files and nothing else for the baseline.
 
+For local script naming and CI command conventions, follow `docs/script-contract.md`.
+
 ---
 
 ## 1) Thin Bugbot Gate caller (all repos)
@@ -105,7 +107,7 @@ jobs:
       repository: ${{ github.event.workflow_run.head_repository.full_name }}
       lint_command: pnpm lint
       typecheck_command: pnpm typecheck
-      # format_command: pnpm format   # uncomment if the repo enforces formatting
+      # format_command: pnpm format:check   # uncomment if the repo enforces formatting
 
   build:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
@@ -124,7 +126,7 @@ jobs:
       # Remove or adjust this job if the repo has no Playwright tests.
 ```
 
-**kynd-web** uses `pnpm check` instead of separate lint/typecheck — override accordingly:
+**kynd-web** uses an aggregate `pnpm check` script — prefer `check_command` over fake no-op typecheck overrides:
 
 ```yaml
   quality:
@@ -133,8 +135,7 @@ jobs:
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
       repository: ${{ github.event.workflow_run.head_repository.full_name }}
-      lint_command: pnpm check
-      typecheck_command: "true"   # check already includes typecheck; skip explicit step
+      check_command: pnpm check
 ```
 
 **spork-web** also runs Python API tests — add a bespoke step or a separate job for `pnpm test:api` in a local `ci-after-gate.yml` that extends the shared quality/build jobs.
@@ -257,6 +258,9 @@ jobs:
       repository: ${{ github.event.workflow_run.head_repository.full_name }}
       node_version: "22"
       raycast_migration_version: "1.103.0"
+      build_command: npm run build
+      lint_command: npm run lint
+      typecheck_command: npm run typecheck
       # yr-wfc has unit tests; brreg-search currently does not:
       # test_command: npm run test:unit
 ```

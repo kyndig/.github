@@ -32,6 +32,8 @@ Last updated: 2026-05-11
 
 **Default branch normalisation** — `TF` currently uses `feat/foundation` as default branch; align to `main` before enforcing org-wide `main` rulesets.
 
+**Script vocabulary drift** — local quality/lint/type scripts differ by repo (`check`, `verify`, `type-check`, `typecheck`). Standardise on `docs/script-contract.md` during onboarding PRs.
+
 **Protected repos to normalise** — `kynd-web` uses `Check` (stale name from an old local CI job), `kynd-web-new` and `varde` use custom local check names. All three need to converge to the shared `Bugbot Gate` baseline once onboarded.
 
 ---

@@ -1,0 +1,15 @@
+{
+  "scripts": {
+    "check": "npm run lint && npm run typecheck && npm run format:check && npm run build",
+    "check:fix": "npm run lint:fix && npm run format:write",
+    "lint": "ray lint",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "npm run type-check",
+    "type-check": "tsc --noEmit",
+    "format:check": "prettier --check .",
+    "format:write": "prettier --write .",
+    "build": "ray build -e dist",
+    "test": "npm run test:unit",
+    "test:e2e": "echo 'raycast repos usually skip e2e'"
+  }
+}
