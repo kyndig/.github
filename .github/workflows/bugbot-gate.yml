@@ -25,6 +25,11 @@ on:
         required: false
         type: string
         default: ""
+      require_thread_resolution:
+        description: When false, the gate passes as soon as Bugbot concludes 'success' without checking for unresolved review threads. Use during rollout to onboard a repo before enforcing thread resolution.
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -47,6 +52,7 @@ jobs:
           BUGBOT_GATE_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
           BUGBOT_GATE_REVIEWER_REGEX: ${{ inputs.qualifying_reviewer_login_regex }}
           BUGBOT_GATE_BODY_REGEXES: ${{ inputs.qualifying_comment_body_regexes }}
+          BUGBOT_GATE_REQUIRE_THREAD_RESOLUTION: ${{ inputs.require_thread_resolution }}
         with:
           script: |
             const owner = context.repo.owner;
@@ -57,6 +63,7 @@ jobs:
             const timeoutMinutes = Number(process.env.BUGBOT_GATE_TIMEOUT_MINUTES);
             const reviewerRegexRaw = process.env.BUGBOT_GATE_REVIEWER_REGEX || '';
             const bodyRegexesRaw = process.env.BUGBOT_GATE_BODY_REGEXES || '';
+            const requireThreadResolution = process.env.BUGBOT_GATE_REQUIRE_THREAD_RESOLUTION !== 'false';
 
             if (!sha) { core.setFailed('Missing required input: sha'); return; }
             if (!Number.isFinite(pullNumber) || pullNumber <= 0) { core.setFailed('Missing or invalid input: pull_number'); return; }
@@ -70,6 +77,7 @@ jobs:
 
             core.info(`Waiting for '${target}' check run on ${sha}…`);
 
+            let bugbotConclusion;
             while (true) {
               const { data } = await github.rest.checks.listForRef({
                 owner, repo, ref: sha, per_page: 100,
@@ -83,9 +91,8 @@ jobs:
               }
 
               if (latest?.status === 'completed') {
-                core.info(`${target} completed with conclusion: ${latest.conclusion}`);
-                // Give Bugbot a moment to finish posting review comments.
-                await new Promise(r => setTimeout(r, 5000));
+                bugbotConclusion = latest.conclusion;
+                core.info(`${target} completed with conclusion: ${bugbotConclusion}`);
                 break;
               }
 
@@ -98,15 +105,39 @@ jobs:
               core.info(`Still waiting for '${target}'…`);
             }
 
-            // ── Step 2: Guard against a concurrent push changing the PR head ──────
+            // ── Step 2: Require Bugbot to have succeeded ──────────────────────────
+            // Any conclusion other than 'success' (failure, cancelled, timed_out,
+            // neutral, skipped, action_required) must block the gate immediately.
 
-            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: pullNumber });
-            if (pr.head.sha !== sha) {
-              core.setFailed(`Race: PR head changed from ${sha} to ${pr.head.sha} during evaluation`);
+            if (bugbotConclusion !== 'success') {
+              core.setFailed(`${target} concluded '${bugbotConclusion}' — gate requires 'success'.`);
               return;
             }
 
-            // ── Step 3: Determine the cycle boundary (timestamp of the latest push) ─
+            if (!requireThreadResolution) {
+              core.info(`${target} concluded 'success' and thread resolution is not required — gate passes.`);
+              return;
+            }
+
+            // ── Step 3: Guard against a concurrent push changing the PR head ──────
+            // Re-checked during settle polling and again before the final verdict so
+            // a push mid-evaluation cannot pass or fail against a stale cycle boundary.
+
+            const assertHeadUnchanged = async (prData) => {
+              const headSha = prData
+                ? prData.head.sha
+                : (await github.rest.pulls.get({ owner, repo, pull_number: pullNumber })).data.head.sha;
+              if (headSha !== sha) {
+                core.setFailed(`Race: PR head changed from ${sha} to ${headSha} during evaluation`);
+                return false;
+              }
+              return true;
+            };
+
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: pullNumber });
+            if (!(await assertHeadUnchanged(pr))) return;
+
+            // ── Step 4: Determine the cycle boundary (timestamp of the latest push) ─
 
             const timelineEvents = await github.paginate(
               github.rest.issues.listEventsForTimeline,
@@ -118,7 +149,7 @@ jobs:
               // author/committer dates, which are user-controllable and can be
               // arbitrarily old (cherry-picks, offline work, pre-created commits).
               // Using an old author date as the cycle boundary would cause prior-cycle
-              // Bugbot comments to satisfy `ts > cycleBoundaryMs` and block the gate.
+              // Bugbot comments to satisfy `ts >= cycleBoundaryMs` and block the gate.
               const candidates = type === 'committed'
                 ? [event?.created_at, event?.committer?.date, event?.author?.date]
                 : [event?.created_at];
@@ -153,7 +184,7 @@ jobs:
             }
             core.info(`Cycle boundary (latest push): ${new Date(cycleBoundaryMs).toISOString()}`);
 
-            // ── Step 4: Build comment qualification matchers ───────────────────────
+            // ── Step 5: Build comment qualification matchers ───────────────────────
 
             const splitTerms = raw =>
               String(raw || '').split(/\r?\n|,|;|\|\|/).map(s => s.trim()).filter(Boolean);
@@ -177,70 +208,132 @@ jobs:
             const isQualifying = comment => {
               const login = String(comment?.author?.login || '').toLowerCase();
               const body = String(comment?.body || '');
+              // Default: exact match on the two known Cursor Bugbot account names.
+              // Use qualifying_reviewer_login_regex to override per repo.
               const reviewerMatch = reviewerRegex
                 ? reviewerRegex.test(login)
-                : (login === 'cursor' || login.includes('cursor'));
+                : (login === 'cursor-bugbot' || login === 'cursor');
               const bodyMatch = bodyRegexes.length > 0
                 ? bodyRegexes.some(r => r.test(body))
                 : defaultBodyMatchers.some(r => r.test(body));
               return reviewerMatch && bodyMatch;
             };
 
-            // ── Step 5: Fetch review threads and evaluate ─────────────────────────
+            // ── Step 6: Poll review threads until stable or deadline ──────────────
+            // Bugbot may post review comments slightly after its check run completes.
+            // Poll for up to SETTLE_MS to let the GitHub API reflect all new comments
+            // before making a pass/fail decision. Fail fast if unresolved findings
+            // appear. Once a non-zero current-cycle count has been observed, require
+            // STABLE_ROUNDS consecutive unchanged counts before declaring a clean
+            // pass. A stable zero count must NOT early-exit — keep polling until
+            // SETTLE_MS so late-arriving threads are not missed.
 
-            const query = `
-              query($owner: String!, $repo: String!, $pullNumber: Int!, $after: String) {
-                repository(owner: $owner, name: $repo) {
-                  pullRequest(number: $pullNumber) {
-                    reviewThreads(first: 100, after: $after) {
-                      pageInfo { hasNextPage endCursor }
-                      nodes {
-                        isResolved
-                        comments(first: 50) {
-                          nodes { body path line createdAt author { login } }
+            const SETTLE_MS = 30_000;
+            const POLL_MS = 5_000;
+            const STABLE_ROUNDS = 2;
+
+            const fetchThreads = async () => {
+              const query = `
+                query($owner: String!, $repo: String!, $pullNumber: Int!, $after: String) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $pullNumber) {
+                      reviewThreads(first: 100, after: $after) {
+                        pageInfo { hasNextPage endCursor }
+                        nodes {
+                          isResolved
+                          comments(first: 100) {
+                            nodes { body path line createdAt author { login } }
+                          }
                         }
                       }
                     }
                   }
                 }
+              `;
+              let threads = [];
+              let after = null;
+              while (true) {
+                const data = await github.graphql(query, { owner, repo, pullNumber, after });
+                const rt = data.repository.pullRequest.reviewThreads;
+                threads = threads.concat(rt.nodes ?? []);
+                if (!rt.pageInfo.hasNextPage) break;
+                after = rt.pageInfo.endCursor;
               }
-            `;
 
-            let allThreads = [];
-            let after = null;
+              const qualifying = threads.filter(t =>
+                (t?.comments?.nodes ?? []).some(c => isQualifying(c))
+              );
+              const currentCycle = qualifying.filter(t =>
+                (t?.comments?.nodes ?? []).some(c => {
+                  if (!isQualifying(c)) return false;
+                  // Inclusive (>=) so comments that share the push's second still
+                  // count. Do not subtract a tolerance — that would pull prior-cycle
+                  // comments from up to 1 s before the push into the current cycle.
+                  const ts = Date.parse(String(c?.createdAt || ''));
+                  return !Number.isNaN(ts) && ts >= cycleBoundaryMs;
+                })
+              );
+              const unresolved = currentCycle.filter(t => !t.isResolved);
+              return {
+                qualifying: qualifying.length,
+                currentCycle: currentCycle.length,
+                unresolved: unresolved.length,
+              };
+            };
+
+            const settleStart = Date.now();
+            let prevCurrentCycle = -1;
+            let stableRounds = 0;
+            let lastResult;
+
             while (true) {
-              const data = await github.graphql(query, { owner, repo, pullNumber, after });
-              const rt = data.repository.pullRequest.reviewThreads;
-              allThreads = allThreads.concat(rt.nodes ?? []);
-              if (!rt.pageInfo.hasNextPage) break;
-              after = rt.pageInfo.endCursor;
+              if (!(await assertHeadUnchanged())) return;
+
+              lastResult = await fetchThreads();
+              core.info(`Qualifying threads — all cycles: ${lastResult.qualifying}, current cycle: ${lastResult.currentCycle}, unresolved: ${lastResult.unresolved}`);
+
+              if (lastResult.unresolved > 0) {
+                // Fail fast — no need to wait for stability.
+                break;
+              }
+
+              // Only early-exit on stability once threads have appeared. A stable
+              // zero means "nothing yet", not "nothing will arrive".
+              if (lastResult.currentCycle > 0 && lastResult.currentCycle === prevCurrentCycle) {
+                stableRounds++;
+                if (stableRounds >= STABLE_ROUNDS) {
+                  core.info(`Thread count stable at ${lastResult.currentCycle} for ${STABLE_ROUNDS} polls — proceeding.`);
+                  break;
+                }
+              } else {
+                stableRounds = 0;
+                prevCurrentCycle = lastResult.currentCycle;
+              }
+
+              if (Date.now() - settleStart >= SETTLE_MS) {
+                core.info('Settle window elapsed — proceeding with last observed state.');
+                break;
+              }
+
+              core.info('Waiting for thread count to stabilize…');
+              await new Promise(r => setTimeout(r, POLL_MS));
             }
 
-            const qualifying = allThreads.filter(t =>
-              (t?.comments?.nodes ?? []).some(c => isQualifying(c))
-            );
+            // ── Step 7: Final verdict ─────────────────────────────────────────────
+            // Re-check head before committing to pass/fail — the last poll may have
+            // completed seconds ago, and a push since then invalidates this cycle.
 
-            const currentCycle = qualifying.filter(t =>
-              (t?.comments?.nodes ?? []).some(c => {
-                if (!isQualifying(c)) return false;
-                const ts = Date.parse(String(c?.createdAt || ''));
-                return !Number.isNaN(ts) && ts > cycleBoundaryMs;
-              })
-            );
+            if (!(await assertHeadUnchanged())) return;
 
-            const unresolved = currentCycle.filter(t => !t.isResolved);
-
-            core.info(`Qualifying threads — all cycles: ${qualifying.length}, current cycle: ${currentCycle.length}, unresolved: ${unresolved.length}`);
-
-            if (currentCycle.length === 0) {
+            if (lastResult.currentCycle === 0) {
               core.info('No qualifying Bugbot threads in the current cycle — gate passes.');
               return;
             }
 
-            if (unresolved.length > 0) {
+            if (lastResult.unresolved > 0) {
               core.setFailed(
-                `Found ${unresolved.length} unresolved Bugbot thread(s) in the current cycle. Resolve them before merging.`
+                `Found ${lastResult.unresolved} unresolved Bugbot thread(s) in the current cycle. Resolve them before merging.`
               );
             } else {
-              core.info(`All ${currentCycle.length} Bugbot thread(s) in the current cycle are resolved — gate passes.`);
+              core.info(`All ${lastResult.currentCycle} Bugbot thread(s) in the current cycle are resolved — gate passes.`);
             }

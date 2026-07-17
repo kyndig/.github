@@ -43,6 +43,37 @@ jobs:
       timeout_minutes: 15
 ```
 
+For repos where thread resolution is not yet enforced (e.g. during initial rollout), pass `require_thread_resolution: false`. The gate will still wait for Bugbot to conclude `success` but will not block on unresolved review threads.
+
+**kynd-kinetic** — thread resolution not currently enforced:
+
+```yaml
+name: Bugbot Gate
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  checks: read
+  pull-requests: read
+
+jobs:
+  gate:
+    name: Bugbot Gate
+    uses: kyndig/.github/.github/workflows/bugbot-gate.yml@main
+    with:
+      sha: ${{ github.event.pull_request.head.sha }}
+      pull_number: ${{ github.event.pull_request.number }}
+      bugbot_check_name: Cursor Bugbot
+      timeout_minutes: 15
+      require_thread_resolution: false
+```
+
+When ready to enforce thread resolution, remove the `require_thread_resolution` line (it defaults to `true`).
+
 ---
 
 ## 2) CI After Gate — per repo category
@@ -71,6 +102,7 @@ jobs:
     uses: kyndig/.github/.github/workflows/node-pnpm-quality.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
+      repository: ${{ github.event.workflow_run.head_repository.full_name }}
       lint_command: pnpm lint
       typecheck_command: pnpm typecheck
       # format_command: pnpm format   # uncomment if the repo enforces formatting
@@ -80,12 +112,14 @@ jobs:
     uses: kyndig/.github/.github/workflows/node-pnpm-build.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
+      repository: ${{ github.event.workflow_run.head_repository.full_name }}
 
   playwright:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     uses: kyndig/.github/.github/workflows/node-pnpm-playwright.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
+      repository: ${{ github.event.workflow_run.head_repository.full_name }}
       test_command: pnpm exec playwright test
       # Remove or adjust this job if the repo has no Playwright tests.
 ```
@@ -98,6 +132,7 @@ jobs:
     uses: kyndig/.github/.github/workflows/node-pnpm-quality.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
+      repository: ${{ github.event.workflow_run.head_repository.full_name }}
       lint_command: pnpm check
       typecheck_command: "true"   # check already includes typecheck; skip explicit step
 ```
@@ -125,6 +160,7 @@ jobs:
     uses: kyndig/.github/.github/workflows/node-pnpm-quality.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
+      repository: ${{ github.event.workflow_run.head_repository.full_name }}
       lint_command: pnpm turbo lint
       typecheck_command: pnpm turbo typecheck
 
@@ -133,8 +169,69 @@ jobs:
     uses: kyndig/.github/.github/workflows/node-pnpm-build.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
+      repository: ${{ github.event.workflow_run.head_repository.full_name }}
       build_command: pnpm turbo test
 ```
+
+---
+
+### Node/npm web app (SvelteKit) — TF
+
+TF currently uses npm (`package-lock.json`) and exposes `npm run check` + `npm run build`.
+Keep the shared `Bugbot Gate` caller, and use a local `CI After Gate` workflow with npm commands:
+
+```yaml
+name: CI After Gate
+
+on:
+  workflow_run:
+    workflows: ["Bugbot Gate"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Quality checks
+        run: npm run check
+
+  build:
+    name: Build
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+```
+
+`TF` currently uses `feat/foundation` as the default branch. For immediate onboarding, set the Bugbot Gate caller trigger branch to that default branch (or include both `main` and `feat/foundation` while migrating).
 
 ---
 
@@ -157,6 +254,7 @@ jobs:
     uses: kyndig/.github/.github/workflows/raycast-ci.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
+      repository: ${{ github.event.workflow_run.head_repository.full_name }}
       node_version: "22"
       raycast_migration_version: "1.103.0"
       # yr-wfc has unit tests; brreg-search currently does not:
@@ -184,6 +282,7 @@ jobs:
     uses: kyndig/.github/.github/workflows/python-sdk-tests.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
+      repository: ${{ github.event.workflow_run.head_repository.full_name }}
       python_version: "3.11"
       working_directory: sdk/adapters/terminal
       test_command: python -m unittest discover -s tests
@@ -324,12 +423,29 @@ Do not guess check names and lock them into policy without observing them first.
 
 ---
 
+## Pilot PR verification checklist
+
+Run these scenarios on the pilot repo before locking required checks via the org ruleset. Each scenario should be tested as a real PR.
+
+| Scenario | Expected gate result |
+|----------|---------------------|
+| Cursor Bugbot concludes `success`, no review threads | Pass |
+| Cursor Bugbot concludes `failure` | Fail immediately (before thread check) |
+| Cursor Bugbot concludes `cancelled` or `timed_out` | Fail immediately |
+| Bugbot posts a qualifying unresolved thread, Bugbot concludes `success` | Fail |
+| Bugbot posts a qualifying thread, developer resolves it, Bugbot concludes `success` | Pass |
+| Developer pushes a new commit after an unresolved thread from the prior push | Fail only if Bugbot re-posts in the new cycle; old threads are ignored |
+| Force-push to the same HEAD SHA | Cycle boundary updates; only post-push threads count |
+| Fork PR with `repository` field in checkout | Checkout succeeds; CI runs on fork code |
+
+---
+
 ## 6) Gate semantics
 
-`Bugbot Gate` passes only when both conditions are true:
+`Bugbot Gate` passes only when **both** conditions are true:
 
-- The `Cursor Bugbot` check run has completed (any conclusion — completion is the trigger).
-- No unresolved Bugbot review threads exist for the **current push cycle** (threads posted after the most recent commit or force-push to the PR).
+- The `Cursor Bugbot` check run has completed with conclusion `success`. Any other conclusion (`failure`, `cancelled`, `timed_out`, `neutral`, `skipped`, `action_required`) fails the gate immediately — even if no unresolved threads exist.
+- No unresolved Bugbot review threads exist for the **current push cycle** (threads whose qualifying comment was posted at or after the most recent commit or force-push to the PR head SHA).
 
 Current-cycle scoping means resolving old threads from a previous commit does not re-open the gate; only threads from the latest push count.
 
@@ -346,5 +462,5 @@ Out of scope in v1:
 Fork PRs are supported as long as:
 
 - `CI After Gate` steps do not depend on repo secrets.
-- `actions/checkout` uses `github.event.workflow_run.head_sha` (contributor-controlled code — treat as untrusted for secrets-sensitive steps).
+- `actions/checkout` uses both `ref: github.event.workflow_run.head_sha` and `repository: github.event.workflow_run.head_repository.full_name`. Without the `repository` field, the SHA may not exist in the base repo remote and checkout fails.
 - `Cursor Bugbot` emits the named check for fork PRs in your org settings. If first-time contributor approval is required by GitHub, the gate will not find the check and will time out by design.
