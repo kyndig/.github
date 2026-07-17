@@ -48,6 +48,11 @@ on:
         required: false
         type: string
         default: ""
+      check_command:
+        description: Aggregate quality command. If set, runs as a single quality step and skips lint/typecheck/format steps.
+        required: false
+        type: string
+        default: ""
       working_directory:
         description: Working directory for all commands.
         required: false
@@ -85,12 +90,18 @@ jobs:
       - name: Install dependencies
         run: ${{ inputs.install_command }}
 
+      - name: Quality
+        if: ${{ inputs.check_command != '' }}
+        run: ${{ inputs.check_command }}
+
       - name: Lint
+        if: ${{ inputs.check_command == '' }}
         run: ${{ inputs.lint_command }}
 
       - name: Typecheck
+        if: ${{ inputs.check_command == '' }}
         run: ${{ inputs.typecheck_command }}
 
       - name: Format check
-        if: ${{ inputs.format_command != '' }}
+        if: ${{ inputs.check_command == '' && inputs.format_command != '' }}
         run: ${{ inputs.format_command }}
