@@ -1,0 +1,111 @@
+name: Swift CI
+
+# Reusable workflow for Swift/Xcode repositories.
+# Runs SwiftLint, SPM tests, and optional xcodebuild on macOS.
+# Intended to be called from a CI After Gate workflow triggered by workflow_run.
+#
+# Requires macOS because xcodebuild and SwiftUI app targets need the Xcode toolchain.
+# The job name "Swift CI" is stable — branch protection rulesets reference it.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit SHA or ref to check out.
+        required: true
+        type: string
+      repository:
+        description: Repository to check out (owner/repo). Defaults to the current repository. Set to github.event.workflow_run.head_repository.full_name for fork PR support.
+        required: false
+        type: string
+        default: ""
+      macos_runner:
+        description: macOS runner label (e.g. macos-15).
+        required: false
+        type: string
+        default: "macos-15"
+      working_directory:
+        description: Working directory for all commands.
+        required: false
+        type: string
+        default: "."
+      check_command:
+        description: Aggregate check command. If set, runs as a single step and skips swiftlint/spm/xcodebuild steps.
+        required: false
+        type: string
+        default: ""
+      swiftlint_command:
+        description: SwiftLint command. Leave empty to skip.
+        required: false
+        type: string
+        default: "swiftlint lint --strict --reporter github-actions-logging"
+      spm_test_command:
+        description: Swift Package Manager test command. Leave empty to skip.
+        required: false
+        type: string
+        default: "swift test"
+      xcode_project:
+        description: Xcode project path relative to working_directory (e.g. triager.xcodeproj). Leave empty to skip xcodebuild.
+        required: false
+        type: string
+        default: ""
+      xcode_scheme:
+        description: Xcode scheme name for xcodebuild. Required when xcode_project is set.
+        required: false
+        type: string
+        default: ""
+      xcode_destination:
+        description: xcodebuild -destination value.
+        required: false
+        type: string
+        default: "platform=macOS"
+      xcodebuild_extra_args:
+        description: Extra arguments passed to xcodebuild (e.g. CODE_SIGNING_ALLOWED=NO).
+        required: false
+        type: string
+        default: "CODE_SIGNING_ALLOWED=NO"
+
+permissions:
+  contents: read
+
+jobs:
+  swift-ci:
+    name: Swift CI
+    runs-on: ${{ inputs.macos_runner }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          repository: ${{ inputs.repository || github.repository }}
+
+      - name: Check
+        if: ${{ inputs.check_command != '' }}
+        run: ${{ inputs.check_command }}
+
+      - name: Install SwiftLint
+        if: ${{ inputs.check_command == '' && inputs.swiftlint_command != '' }}
+        run: brew install swiftlint
+
+      - name: SwiftLint
+        if: ${{ inputs.check_command == '' && inputs.swiftlint_command != '' }}
+        run: ${{ inputs.swiftlint_command }}
+
+      - name: SPM tests
+        if: ${{ inputs.check_command == '' && inputs.spm_test_command != '' }}
+        run: ${{ inputs.spm_test_command }}
+
+      - name: Xcode build
+        if: ${{ inputs.check_command == '' && inputs.xcode_project != '' && inputs.xcode_scheme != '' }}
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project "${{ inputs.xcode_project }}" \
+            -scheme "${{ inputs.xcode_scheme }}" \
+            -destination "${{ inputs.xcode_destination }}" \
+            build \
+            ${{ inputs.xcodebuild_extra_args }}
