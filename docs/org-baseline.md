@@ -74,7 +74,7 @@ Once you have confirmed exact emitted check names from a real PR run, add the re
 | Web pnpm + Playwright | `CI After Gate / Quality`, `CI After Gate / Build`, `CI After Gate / Playwright` |
 | Raycast extension | `CI After Gate / Raycast CI` |
 | Python SDK | `CI After Gate / SDK Tests` |
-| Swift/macOS | `CI After Gate / SwiftLint` |
+| Swift/macOS | `CI After Gate / Swift CI` |
 | CLI tool | `CI After Gate / CI` |
 
 Do not guess check names. The check name in the GitHub UI is what to use.

@@ -23,6 +23,7 @@ Last updated: 2026-05-11
 | kynd-bid-system | main | ✅ | ❌ | — |
 | spork | main | ✅ | ❌ | — |
 | spork-web | main | ✅ | ❌ | — |
+| triager | main | ❌ | ❌ | — |
 
 ### Gaps to close
 
@@ -222,7 +223,18 @@ The shared gate combines check-run wait (from `ritz`) with cycle-boundary logic 
 | Web app, npm (SvelteKit) | `TF` |
 | Node/pnpm monorepo | `kynd-bid-system` |
 | Raycast extension | `yr-wfc`, `brreg-search` |
-| Swift/macOS app | `ritz` |
+| Swift/macOS app | `ritz`, `triager` |
 | Python SDK / kit | `varde` |
 | CLI tool (shell/macOS) | `spork` |
 | No known CI yet | `switchto`, `varde-web`, `faen-ta` |
+
+### triager (Swift/macOS — onboarding)
+
+| Workflow | Trigger | Notes |
+|----------|---------|-------|
+| `Bugbot Gate` | pull_request | Shared reusable gate; waits for Cursor Bugbot + unresolved thread check |
+| `CI After Gate` | workflow_run | SPM tests + Xcode app build via shared `swift-ci.yml`; SwiftLint deferred |
+
+**Bugbot first**: Yes — expensive macOS CI runs only after gate passes.
+**Expensive CI on `pull_request`**: No (gated via `workflow_run`).
+**Shared gate**: Onboarded (pending merge of `swift-ci.yml` to `kyndig/.github@main` and first push to remote).
