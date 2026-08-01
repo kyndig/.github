@@ -78,7 +78,7 @@ jobs:
         working-directory: ${{ inputs.working_directory }}
 
     steps:
-      - name: Validate Xcode inputs
+      - name: Validate inputs
         if: ${{ inputs.check_command == '' }}
         run: |
           set -euo pipefail
@@ -90,9 +90,21 @@ jobs:
             echo "::error::xcode_scheme is set but xcode_project is empty — Xcode build would be skipped."
             exit 1
           fi
+          run_swiftlint=false
+          run_spm_test=false
+          run_xcode_build=false
+          if [ -n "${SWIFTLINT_COMMAND}" ]; then run_swiftlint=true; fi
+          if [ -n "${SPM_TEST_COMMAND}" ]; then run_spm_test=true; fi
+          if [ -n "${XCODE_PROJECT}" ] && [ -n "${XCODE_SCHEME}" ]; then run_xcode_build=true; fi
+          if [ "${run_swiftlint}" = false ] && [ "${run_spm_test}" = false ] && [ "${run_xcode_build}" = false ]; then
+            echo "::error::No Swift CI checks are configured. Set check_command or at least one of swiftlint_command, spm_test_command, or xcode_project+xcode_scheme."
+            exit 1
+          fi
         env:
           XCODE_PROJECT: ${{ inputs.xcode_project }}
           XCODE_SCHEME: ${{ inputs.xcode_scheme }}
+          SWIFTLINT_COMMAND: ${{ inputs.swiftlint_command }}
+          SPM_TEST_COMMAND: ${{ inputs.spm_test_command }}
 
       - uses: actions/checkout@v5
         with:
