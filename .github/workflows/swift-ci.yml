@@ -78,6 +78,22 @@ jobs:
         working-directory: ${{ inputs.working_directory }}
 
     steps:
+      - name: Validate Xcode inputs
+        if: ${{ inputs.check_command == '' }}
+        run: |
+          set -euo pipefail
+          if [ -n "${XCODE_PROJECT}" ] && [ -z "${XCODE_SCHEME}" ]; then
+            echo "::error::xcode_project is set but xcode_scheme is empty — Xcode build would be skipped."
+            exit 1
+          fi
+          if [ -z "${XCODE_PROJECT}" ] && [ -n "${XCODE_SCHEME}" ]; then
+            echo "::error::xcode_scheme is set but xcode_project is empty — Xcode build would be skipped."
+            exit 1
+          fi
+        env:
+          XCODE_PROJECT: ${{ inputs.xcode_project }}
+          XCODE_SCHEME: ${{ inputs.xcode_scheme }}
+
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}
