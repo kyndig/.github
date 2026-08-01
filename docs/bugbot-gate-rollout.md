@@ -9,6 +9,7 @@ The shared org-level gate lives in this repo at:
 - `.github/workflows/node-pnpm-playwright.yml` — reusable Playwright
 - `.github/workflows/raycast-ci.yml` — reusable Raycast extension CI
 - `.github/workflows/python-sdk-tests.yml` — reusable Python SDK tests
+- `.github/workflows/swift-ci.yml` — reusable Swift/Xcode CI (SwiftLint, SPM tests, xcodebuild)
 
 Each active application repo needs two workflow files and nothing else for the baseline.
 
@@ -297,9 +298,9 @@ jobs:
 
 ---
 
-### Swift/macOS — ritz
+### Swift/macOS — triager, ritz
 
-Ritz uses SwiftLint on a macOS runner. There is no shared reusable workflow for Swift yet. Create a local `ci-after-gate.yml` that calls SwiftLint directly after the gate:
+Use the shared `swift-ci.yml` reusable workflow. Triager runs SPM unit tests and an Xcode app build; enable SwiftLint once lint debt is cleared.
 
 ```yaml
 name: CI After Gate
@@ -313,20 +314,20 @@ permissions:
   contents: read
 
 jobs:
-  swiftlint:
-    name: SwiftLint
+  swift-ci:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: macos-15
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-      - name: Install SwiftLint
-        run: brew install swiftlint
-      - name: Run SwiftLint
-        run: swiftlint lint --strict --reporter github-actions-logging
+    uses: kyndig/.github/.github/workflows/swift-ci.yml@main
+    with:
+      ref: ${{ github.event.workflow_run.head_sha }}
+      repository: ${{ github.event.workflow_run.head_repository.full_name }}
+      spm_test_command: swift test
+      xcode_project: triager.xcodeproj
+      xcode_scheme: triager
+      # Omit or set swiftlint_command when ready to enforce SwiftLint strict.
+      swiftlint_command: ""
 ```
+
+For repos that only need SwiftLint (e.g. ritz during migration), pass `spm_test_command: ""` and `xcode_project: ""`, or use `check_command: make check` when a local adapter exists.
 
 ---
 
