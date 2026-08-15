@@ -162,7 +162,8 @@ Create a reusable workflow in the shared org repo with:
 - input `sha` (required)
 - input `pull_number` (required) — needed for the cycle-boundary and thread checks
 - input `bugbot_check_name`
-- input `timeout_minutes`
+- input `timeout_minutes` — polling budget from 1 through 18 minutes; the
+  workflow's literal 20-minute job timeout leaves shutdown headroom
 - input `qualifying_reviewer_login_regex` — override the default Bugbot author allowlist
 - input `qualifying_comment_body_regexes` — override the default body pattern matchers
 - input `require_thread_resolution` — set to `false` to skip the unresolved-thread check (Bugbot `success` is still required); useful during staged rollout
@@ -172,7 +173,7 @@ Recommended defaults:
 - `bugbot_check_name: Cursor Bugbot`
 - `timeout_minutes: 15`
 
-The canonical implementation lives in `.github/workflows/bugbot-gate.yml` in the shared org repo. Refer to that file rather than re-implementing the logic; the script runs under `actions/github-script@v7` and must pass all inputs through environment variables (not inline `${{ }}` template substitution in the script body) to avoid script-injection vulnerabilities.
+The canonical implementation lives in `.github/workflows/bugbot-gate.yml` in the shared org repo. Refer to that file rather than re-implementing the logic; the script runs under a reviewed, immutable `actions/github-script` commit and must pass all inputs through environment variables (not inline `${{ }}` template substitution in the script body) to avoid script-injection vulnerabilities.
 
 ## Thin per-repo caller workflow
 

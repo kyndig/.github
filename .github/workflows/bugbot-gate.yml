@@ -40,11 +40,13 @@ jobs:
   gate:
     name: Bugbot Gate
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.timeout_minutes + 2 }}
+    # GitHub expressions do not support arithmetic. Keep the outer job budget
+    # literal and validate the caller-provided polling budget below.
+    timeout-minutes: 20
 
     steps:
       - name: Wait for Bugbot and verify no unresolved threads
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           BUGBOT_GATE_SHA: ${{ inputs.sha }}
           BUGBOT_GATE_PULL_NUMBER: ${{ inputs.pull_number }}
@@ -68,7 +70,10 @@ jobs:
             if (!sha) { core.setFailed('Missing required input: sha'); return; }
             if (!Number.isFinite(pullNumber) || pullNumber <= 0) { core.setFailed('Missing or invalid input: pull_number'); return; }
             if (!target) { core.setFailed('Missing required input: bugbot_check_name'); return; }
-            if (!Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) { core.setFailed('Invalid input: timeout_minutes must be a positive number'); return; }
+            if (!Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0 || timeoutMinutes > 18) {
+              core.setFailed('Invalid input: timeout_minutes must be between 1 and 18');
+              return;
+            }
 
             const timeoutMs = timeoutMinutes * 60 * 1000;
             const start = Date.now();
