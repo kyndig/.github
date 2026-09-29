@@ -38,7 +38,7 @@ permissions:
 jobs:
   gate:
     name: Bugbot Gate
-    uses: kyndig/.github/.github/workflows/bugbot-gate.yml@main
+    uses: kyndig/actions/.github/workflows/bugbot-gate.yml@main
     with:
       sha: ${{ github.event.pull_request.head.sha }}
       pull_number: ${{ github.event.pull_request.number }}
@@ -66,7 +66,7 @@ permissions:
 jobs:
   gate:
     name: Bugbot Gate
-    uses: kyndig/.github/.github/workflows/bugbot-gate.yml@main
+    uses: kyndig/actions/.github/workflows/bugbot-gate.yml@main
     with:
       sha: ${{ github.event.pull_request.head.sha }}
       pull_number: ${{ github.event.pull_request.number }}
@@ -102,7 +102,7 @@ permissions:
 jobs:
   quality:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    uses: kyndig/.github/.github/workflows/node-pnpm-quality.yml@main
+    uses: kyndig/actions/.github/workflows/node-pnpm-quality.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
       repository: ${{ github.event.workflow_run.head_repository.full_name }}
@@ -112,14 +112,14 @@ jobs:
 
   build:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    uses: kyndig/.github/.github/workflows/node-pnpm-build.yml@main
+    uses: kyndig/actions/.github/workflows/node-pnpm-build.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
       repository: ${{ github.event.workflow_run.head_repository.full_name }}
 
   playwright:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    uses: kyndig/.github/.github/workflows/node-pnpm-playwright.yml@main
+    uses: kyndig/actions/.github/workflows/node-pnpm-playwright.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
       repository: ${{ github.event.workflow_run.head_repository.full_name }}
@@ -132,7 +132,7 @@ jobs:
 ```yaml
   quality:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    uses: kyndig/.github/.github/workflows/node-pnpm-quality.yml@main
+    uses: kyndig/actions/.github/workflows/node-pnpm-quality.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
       repository: ${{ github.event.workflow_run.head_repository.full_name }}
@@ -159,7 +159,7 @@ permissions:
 jobs:
   quality:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    uses: kyndig/.github/.github/workflows/node-pnpm-quality.yml@main
+    uses: kyndig/actions/.github/workflows/node-pnpm-quality.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
       repository: ${{ github.event.workflow_run.head_repository.full_name }}
@@ -168,7 +168,7 @@ jobs:
 
   test:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    uses: kyndig/.github/.github/workflows/node-pnpm-build.yml@main
+    uses: kyndig/actions/.github/workflows/node-pnpm-build.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
       repository: ${{ github.event.workflow_run.head_repository.full_name }}
@@ -253,7 +253,7 @@ permissions:
 jobs:
   raycast:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    uses: kyndig/.github/.github/workflows/raycast-ci.yml@main
+    uses: kyndig/actions/.github/workflows/raycast-ci.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
       repository: ${{ github.event.workflow_run.head_repository.full_name }}
@@ -284,7 +284,7 @@ permissions:
 jobs:
   sdk-tests:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    uses: kyndig/.github/.github/workflows/python-sdk-tests.yml@main
+    uses: kyndig/actions/.github/workflows/python-sdk-tests.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
       repository: ${{ github.event.workflow_run.head_repository.full_name }}
@@ -316,7 +316,7 @@ permissions:
 jobs:
   swift-ci:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    uses: kyndig/.github/.github/workflows/swift-ci.yml@main
+    uses: kyndig/actions/.github/workflows/swift-ci.yml@main
     with:
       ref: ${{ github.event.workflow_run.head_sha }}
       repository: ${{ github.event.workflow_run.head_repository.full_name }}
@@ -384,7 +384,7 @@ permissions:
 jobs:
   metadata:
     name: PR Metadata Check
-    uses: kyndig/.github/.github/workflows/pr-metadata-check.yml@main
+    uses: kyndig/actions/.github/workflows/pr-metadata-check.yml@main
     with:
       require_issue_ref: true
       allow_work_doc: false            # set true for repos using WorkDoc: docs/work/<slug>.md
