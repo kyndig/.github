@@ -237,4 +237,4 @@ The shared gate combines check-run wait (from `ritz`) with cycle-boundary logic 
 
 **Bugbot first**: Yes — expensive macOS CI runs only after gate passes.
 **Expensive CI on `pull_request`**: No (gated via `workflow_run`).
-**Shared gate**: Onboarded (pending merge of `swift-ci.yml` to `kyndig/.github@main` and first push to remote).
+**Shared gate**: Onboarded (pending merge of `swift-ci.yml` to `kyndig/actions@main` and first push to remote).
